@@ -96,6 +96,8 @@ const App = () => {
             setMessage={setCurrentMessage}
             onSendMessage={handleSendMessage}
             onFileUpload={handleFileUpload}
+            files={files}
+            onFileRemove={handleFileRemove}
             onShowGraph={() => setIsGraphModalOpen(true)}
             onToggleSidebar={handleToggleSidebar}
             isSidebarCollapsed={isSidebarCollapsed}

@@ -5,7 +5,7 @@ import MessageBubble from '../molecules/messageBubble';
 import ChatInputBox from '../molecules/chatInputbox';
 import ChatHeader from '../molecules/chatHeader';
 
-const ChatWindow = ({ messages, isLoading, message, setMessage, onSendMessage, onFileUpload, onShowGraph, onToggleSidebar, isSidebarCollapsed, disabled }) => {
+const ChatWindow = ({ messages, isLoading, message, setMessage, onSendMessage, onFileUpload, files = [], onFileRemove, onShowGraph, onToggleSidebar, isSidebarCollapsed, disabled }) => {
   const messagesEndRef = useRef(null);
 
   useEffect(() => {
@@ -59,6 +59,8 @@ const ChatWindow = ({ messages, isLoading, message, setMessage, onSendMessage, o
         setMessage={setMessage}
         onSend={onSendMessage}
         onFileUpload={onFileUpload}
+        files={files}
+        onFileRemove={onFileRemove}
         disabled={disabled}
       />
     </div>

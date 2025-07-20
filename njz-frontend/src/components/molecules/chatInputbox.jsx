@@ -1,9 +1,19 @@
 import Button from '../atoms/buttons';
 import InputField from '../atoms/inputfeild';
 import React, { useRef } from 'react';
-import { Upload, Send } from 'lucide-react';
+import { Upload, Send, FileText } from 'lucide-react';
 import Icon from '../atoms/icons';
-const ChatInputBox = ({ message, setMessage, onSend, onFileUpload, disabled = false }) => {
+import Tag from '../atoms/tag';
+
+const ChatInputBox = ({
+  message,
+  setMessage,
+  onSend,
+  onFileUpload,
+  files = [],
+  onFileRemove,
+  disabled = false
+}) => {
   const fileInputRef = useRef(null);
 
   const handleKeyPress = (e) => {
@@ -17,7 +27,26 @@ const ChatInputBox = ({ message, setMessage, onSend, onFileUpload, disabled = fa
 
   return (
     <div className="border-t border-[#23232b] bg-[#18181b] p-4">
-      <label className="block text-xs text-[#a1a1aa] mb-1 uppercase tracking-wider">Type your message</label>
+      <label className="block text-xs text-[#a1a1aa] mb-1 uppercase tracking-wider">
+        Type your message
+      </label>
+
+      {/* Uploaded Files Appear Above Input */}
+      {files.length > 0 && (
+        <div className="flex flex-wrap gap-2 mb-3">
+          {files.map((file, idx) => (
+            <Tag
+              key={file.name + idx}
+              onRemove={() => onFileRemove(idx)}
+              className="bg-[#23232b] border border-cyan-300 text-cyan-300"
+            >
+              <Icon icon={FileText} size="sm" className="mr-1" />
+              {file.name}
+            </Tag>
+          ))}
+        </div>
+      )}
+
       <div className="flex items-end space-x-2">
         <div className="flex-1 relative">
           <InputField
@@ -36,7 +65,7 @@ const ChatInputBox = ({ message, setMessage, onSend, onFileUpload, disabled = fa
             variant="ghost"
             size="sm"
             onClick={() => fileInputRef.current?.click()}
-            disabled={disabled}
+
             className="hover:bg-[#23232b]"
           >
             <Icon icon={Upload} />
@@ -52,6 +81,7 @@ const ChatInputBox = ({ message, setMessage, onSend, onFileUpload, disabled = fa
           </Button>
         </div>
       </div>
+
       <input
         ref={fileInputRef}
         type="file"

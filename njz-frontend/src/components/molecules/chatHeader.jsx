@@ -2,7 +2,12 @@ import React from 'react';
 import { MessageSquare, Network, Sun, Moon, Settings, ChevronLeft, ChevronRight } from 'lucide-react';
 import Icon from '../atoms/icons';
 import Button from '../atoms/buttons';
+import { useNavigate } from 'react-router-dom';
 const ChatHeader = ({ title = "NJZ Chat", onShowGraph, onToggleSidebar, isSidebarCollapsed }) => {
+  const navigate = useNavigate();
+  const handleLogin = () => {
+    navigate('/login', { state: { from: window.location.pathname } });
+  };
 
   return (
     <div className="border-b border-[#23232b] bg-[#18181b] p-4">
@@ -22,8 +27,10 @@ const ChatHeader = ({ title = "NJZ Chat", onShowGraph, onToggleSidebar, isSideba
             Show RAG Graph
           </Button>
 
-          <Button variant="ghost" size="sm">
-            <Icon icon={Settings} />
+
+
+          <Button variant="primary" size="sm" onClick={handleLogin} className="border-[#39FF14] text-[#39FF14] bg-transparent hover:bg-[#23232b]">
+            Login / Signup
           </Button>
         </div>
       </div>
