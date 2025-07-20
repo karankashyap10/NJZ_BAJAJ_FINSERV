@@ -27,7 +27,7 @@ A Django REST Framework backend for the NJZ BAJAJ FINSERV application.
 
 3. **Install dependencies**
    ```bash
-   pip install -r requirements.txt
+   pip install -r ..\requirements.txt
    ```
 
 4. **Run database migrations**
