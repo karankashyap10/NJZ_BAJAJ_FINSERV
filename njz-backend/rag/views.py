@@ -1,7 +1,7 @@
 # Create your views here.
 import os
 import json
-from typing import List
+from typing import List, Tuple
 from pathlib import Path
 from pypdf import PdfReader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
@@ -10,6 +10,22 @@ import numpy as np
 import spacy
 from neo4j import GraphDatabase
 from sentence_transformers import SentenceTransformer
+import google.generativeai as genai
+from django.views.decorators.csrf import csrf_exempt
+from django.http import JsonResponse
+import json as dj_json
+from django.core.files.storage import default_storage
+from django.core.files.base import ContentFile
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.authentication import BasicAuthentication
+from rest_framework_simplejwt.authentication import JWTAuthentication
+from rest_framework.parsers import MultiPartParser, FormParser
+from django.conf import settings
+from .models import Chat, KnowledgeGraph
+from .serializers import ChatSerializer, KnowledgeGraphSerializer
+from django.shortcuts import get_object_or_404
 
 # Load local embedding model (downloaded once, then reused)
 embedding_model = SentenceTransformer("all-MiniLM-L6-v2")  # ~384 dims
@@ -125,92 +141,196 @@ def ingestion(pdf_folder: str):
 
 
 
-# import os
-# import json
-# from typing import List, Tuple
+import os
+import json
+from typing import List, Tuple
 
-# import faiss
-# import numpy as np
-# from sentence_transformers import SentenceTransformer
-# import google.generativeai as genai
+import faiss
+import numpy as np
+from sentence_transformers import SentenceTransformer
+import google.generativeai as genai
 
-# INDEX_PATH = r"C:\Users\Karan\Desktop\llm-pipeline\faiss_index.idx"
-# METADATA_PATH = r"C:\Users\Karan\Desktop\llm-pipeline\metadata.json"
-# EMBEDDING_MODEL_NAME = "all-MiniLM-L6-v2"
-# TOP_K = 5
+MEDIA_DIR = getattr(settings, 'MEDIA_ROOT', 'media')
+os.makedirs(MEDIA_DIR, exist_ok=True)
+INDEX_PATH = os.path.join(MEDIA_DIR, 'faiss_index.idx')
+METADATA_PATH = os.path.join(MEDIA_DIR, 'metadata.json')
+EMBEDDING_MODEL_NAME = "all-MiniLM-L6-v2"
+TOP_K = 5
 
-# genai.configure(api_key="AIzaSyD8Xm6SUR-zWssC4kQgAvfYD3OdSgOaL-U")
-# # Load FAISS index and metadata
+genai.configure(api_key="gemini-key")
+# Load FAISS index and metadata
 
-# def load_resources() -> Tuple[faiss.IndexFlatL2, List[dict], SentenceTransformer]:
-#     # load FAISS index
-#     index = faiss.read_index(INDEX_PATH)
+def load_resources() -> Tuple[faiss.IndexFlatL2, List[dict], SentenceTransformer]:
+    # load FAISS index
+    d = 384  # embedding dimension
+    if os.path.exists(INDEX_PATH):
+        index = faiss.read_index(INDEX_PATH)
+    else:
+        index = faiss.IndexFlatL2(d)
+
+    # load metadata
+    if os.path.exists(METADATA_PATH):
+        with open(METADATA_PATH, 'r', encoding='utf-8') as f:
+            metadata = json.load(f)
+    else:
+        metadata = []
+
+    # load embedding model
+    embedder = SentenceTransformer(EMBEDDING_MODEL_NAME)
+    return index, metadata, embedder
+
+# --------------------------------------------------
+# Retrieve context chunks by similarity
+# --------------------------------------------------
+def retrieve_context(query: str,
+                     index: faiss.IndexFlatL2,
+                     metadata: List[dict],
+                     embedder: SentenceTransformer,
+                     top_k: int = TOP_K) -> List[str]:
+    # encode query
+    q_emb = embedder.encode([query], convert_to_numpy=True).astype('float32')
     
-#     # load metadata (list of dicts with keys: source, chunk_id, chunk_text)
-#     with open(METADATA_PATH, 'r', encoding='utf-8') as f:
-#         metadata = json.load(f)
+    # search
+    distances, indices = index.search(q_emb, top_k)
     
-#     # load embedding model
-#     embedder = SentenceTransformer(EMBEDDING_MODEL_NAME)
+    # gather chunk texts
+    chunks = []
+    for idx in indices[0]:
+        chunks.append(metadata[idx]["chunk_text"])
+    return chunks
+
+# --------------------------------------------------
+# Ask Gemini with retrieved context
+# --------------------------------------------------
+def answer_with_gemini(query: str, context: List[str]) -> str:
+    prompt = (
+        "You are an expert assistant. Use the following document excerpts to answer the question precisely.\n\n"
+        "Excerpts:\n" + "\n---\n".join(context) + "\n\n"
+        "Question: " + query + "\nAnswer:"
+    )
+
+    # Load model (only once ideally, can move this outside function for efficiency)
+    model = genai.GenerativeModel("gemini-2.5-pro")
+    response = model.generate_content(prompt)
     
-#     return index, metadata, embedder
-
-# # --------------------------------------------------
-# # Retrieve context chunks by similarity
-# # --------------------------------------------------
-# def retrieve_context(query: str,
-#                      index: faiss.IndexFlatL2,
-#                      metadata: List[dict],
-#                      embedder: SentenceTransformer,
-#                      top_k: int = TOP_K) -> List[str]:
-#     # encode query
-#     q_emb = embedder.encode([query], convert_to_numpy=True).astype('float32')
-    
-#     # search
-#     distances, indices = index.search(q_emb, top_k)
-    
-#     # gather chunk texts
-#     chunks = []
-#     for idx in indices[0]:
-#         chunks.append(metadata[idx]["chunk_text"])
-#     return chunks
-
-# # --------------------------------------------------
-# # Ask Gemini with retrieved context
-# # --------------------------------------------------
-# def answer_with_gemini(query: str, context: List[str]) -> str:
-#     prompt = (
-#         "You are an expert assistant. Use the following document excerpts to answer the question precisely.\n\n"
-#         "Excerpts:\n" + "\n---\n".join(context) + "\n\n"
-#         "Question: " + query + "\nAnswer:"
-#     )
-
-#     # Load model (only once ideally, can move this outside function for efficiency)
-#     model = genai.GenerativeModel("gemini-2.5-pro")
-#     response = model.generate_content(prompt)
-    
-#     return response.text
+    return response.text
 
 
-# # --------------------------------------------------
-# # End-to-end query function
-# # --------------------------------------------------
-# class RAGService:
-#     def __init__(self):
-#         self.index, self.metadata, self.embedder = load_resources()
+# --------------------------------------------------
+# End-to-end query function
+# --------------------------------------------------
+class RAGService:
+    def __init__(self):
+        self.index, self.metadata, self.embedder = load_resources()
 
-#     def query(self, question: str) -> str:
-#         context = retrieve_context(question, self.index, self.metadata, self.embedder)
-#         return answer_with_gemini(question, context)
+    def query(self, question: str) -> str:
+        context = retrieve_context(question, self.index, self.metadata, self.embedder)
+        return answer_with_gemini(question, context)
 
-# # --------------------------------------------------
-# # CLI example
-# # --------------------------------------------------
-# if __name__ == "__main__":
-#     service = RAGService()
-#     while(True):
-#         user_q = input("Enter your question: ")
-#         print("\nAnswer:\n", service.query(user_q))
+# --------------------------------------------------
+# CLI example
+# --------------------------------------------------
+if __name__ == "__main__":
+    service = RAGService()
+    while(True):
+        user_q = input("Enter your question: ")
+        print("\nAnswer:\n", service.query(user_q))
+
+
+
+
+# Initialize RAG service once (global)
+rag_service = RAGService()
+
+class RagQueryView(APIView):
+    authentication_classes = [JWTAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        try:
+            question = request.data.get("question")
+            if not question:
+                return Response({"error": "No question provided"}, status=400)
+            answer = rag_service.query(question)
+            return Response({"answer": answer})
+        except Exception as e:
+            return Response({"error": str(e)}, status=500)
+    def get(self, request):
+        return Response({"error": "Only POST allowed"}, status=405)
+    def put(self, request):
+        return Response({"error": "Only POST allowed"}, status=405)
+    def delete(self, request):
+        return Response({"error": "Only POST allowed"}, status=405)
+
+class ChatListCreateView(APIView):
+    authentication_classes = [JWTAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        chats = Chat.objects.filter(user=request.user)
+        serializer = ChatSerializer(chats, many=True)
+        return Response(serializer.data)
+
+    def post(self, request):
+        serializer = ChatSerializer(data={**request.data, 'user': request.user.id})
+        if serializer.is_valid():
+            chat = serializer.save()
+            return Response(ChatSerializer(chat).data, status=201)
+        return Response(serializer.errors, status=400)
+
+class KnowledgeGraphRetrieveView(APIView):
+    authentication_classes = [JWTAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, chat_id):
+        chat = get_object_or_404(Chat, id=chat_id, user=request.user)
+        if hasattr(chat, 'knowledge_graph'):
+            serializer = KnowledgeGraphSerializer(chat.knowledge_graph)
+            return Response(serializer.data)
+        return Response({'error': 'No knowledge graph for this chat.'}, status=404)
+
+# Update UploadPDFView to create Chat and KnowledgeGraph
+class UploadPDFView(APIView):
+    authentication_classes = [JWTAuthentication]
+    permission_classes = [IsAuthenticated]
+    parser_classes = [MultiPartParser, FormParser]
+
+    def post(self, request):
+        pdf_file = request.FILES.get("file")
+        chat_name = request.data.get("chat_name") or pdf_file.name
+        if not pdf_file:
+            return Response({"error": "No file uploaded"}, status=400)
+        save_dir = MEDIA_DIR
+        os.makedirs(save_dir, exist_ok=True)
+        save_path = os.path.join(save_dir, pdf_file.name)
+        file_path = default_storage.save(save_path, ContentFile(pdf_file.read()))
+        # Create Chat
+        chat = Chat.objects.create(user=request.user, name=chat_name)
+        # Ingest the single PDF and create per-file metadata
+        try:
+            chunks, full_text = extract_and_chunk(file_path)
+            metadata = [{"source": pdf_file.name, "chunk_id": i, "chunk_text": chunk} for i, chunk in enumerate(chunks)]
+            embed_and_index(chunks, metadata)
+            build_graph(full_text, doc_id=pdf_file.name)
+            # Save per-file metadata
+            metadata_path = os.path.join(save_dir, f"{os.path.splitext(pdf_file.name)[0]}_metadata.json")
+            with open(metadata_path, "w", encoding="utf-8") as f:
+                json.dump(metadata, f, indent=2, ensure_ascii=False)
+            # Optionally, update global index/metadata as well
+            save_faiss_index(INDEX_PATH)
+            save_metadata_json(METADATA_PATH)
+            # Store knowledge graph (for demo, just store metadata, but you can store graph structure)
+            KnowledgeGraph.objects.create(chat=chat, graph_data={"metadata_path": metadata_path})
+        except Exception as e:
+            chat.delete()
+            return Response({"error": f"Ingestion failed: {str(e)}"}, status=500)
+        return Response({"message": "PDF uploaded, chat and knowledge graph created successfully", "chat_id": chat.id})
+    def get(self, request):
+        return Response({"error": "Only POST allowed"}, status=405)
+    def put(self, request):
+        return Response({"error": "Only POST allowed"}, status=405)
+    def delete(self, request):
+        return Response({"error": "Only POST allowed"}, status=405)
 
 
 
