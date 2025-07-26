@@ -5,3 +5,11 @@ python-decouple==3.8
 Pillow==11.3.0
 django-filter==2.4.0
 djangorestframework-simplejwt==5.5.0
+pypdf
+langchain
+faiss-cpu
+numpy
+spacy
+neo4j
+sentence-transformers
+google-generativeai
