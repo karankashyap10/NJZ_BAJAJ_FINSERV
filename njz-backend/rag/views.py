@@ -26,6 +26,7 @@ from django.conf import settings
 from .models import Chat, KnowledgeGraph
 from .serializers import ChatSerializer, KnowledgeGraphSerializer
 from django.shortcuts import get_object_or_404
+import shutil
 
 # Load local embedding model (downloaded once, then reused)
 embedding_model = SentenceTransformer("all-MiniLM-L6-v2")  # ~384 dims
@@ -157,7 +158,7 @@ METADATA_PATH = os.path.join(MEDIA_DIR, 'metadata.json')
 EMBEDDING_MODEL_NAME = "all-MiniLM-L6-v2"
 TOP_K = 5
 
-genai.configure(api_key="gemini-key")
+genai.configure(api_key="AIzaSyCiAWJw41BYAPi6qs4aJqjID_P3Goj1NQ4")
 # Load FAISS index and metadata
 
 def load_resources() -> Tuple[faiss.IndexFlatL2, List[dict], SentenceTransformer]:
@@ -242,25 +243,104 @@ if __name__ == "__main__":
 # Initialize RAG service once (global)
 rag_service = RAGService()
 
-class RagQueryView(APIView):
+def get_chat_dir(chat_id):
+    chat_dir = os.path.join(MEDIA_DIR, f"chat_{chat_id}")
+    os.makedirs(chat_dir, exist_ok=True)
+    return chat_dir
+
+def get_chat_index_path(chat_id):
+    return os.path.join(get_chat_dir(chat_id), "faiss_index.idx")
+
+def get_chat_metadata_path(chat_id):
+    return os.path.join(get_chat_dir(chat_id), "metadata.json")
+
+def get_chat_metadata(chat_id):
+    path = get_chat_metadata_path(chat_id)
+    if os.path.exists(path):
+        with open(path, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    return []
+
+def save_chat_metadata(chat_id, metadata):
+    path = get_chat_metadata_path(chat_id)
+    with open(path, 'w', encoding='utf-8') as f:
+        json.dump(metadata, f, indent=2, ensure_ascii=False)
+
+def get_chat_index(chat_id):
+    path = get_chat_index_path(chat_id)
+    if os.path.exists(path):
+        return faiss.read_index(path)
+    else:
+        return faiss.IndexFlatL2(d)
+
+def save_chat_index(chat_id, index):
+    path = get_chat_index_path(chat_id)
+    faiss.write_index(index, path)
+
+class UploadPDFToChatView(APIView):
+    authentication_classes = [JWTAuthentication]
+    permission_classes = [IsAuthenticated]
+    parser_classes = [MultiPartParser, FormParser]
+
+    def post(self, request, chat_id):
+        chat = get_object_or_404(Chat, id=chat_id, user=request.user)
+        pdf_file = request.FILES.get("file")
+        if not pdf_file:
+            return Response({"error": "No file uploaded"}, status=400)
+        chat_dir = get_chat_dir(chat_id)
+        save_path = os.path.join(chat_dir, pdf_file.name)
+        relative_path = default_storage.save(save_path, ContentFile(pdf_file.read()))
+        file_path = default_storage.path(relative_path)
+        try:
+            # Load or create per-chat index/metadata
+            index = get_chat_index(chat_id)
+            metadata = get_chat_metadata(chat_id)
+            # Ingest PDF
+            chunks, full_text = extract_and_chunk(file_path)
+            new_metadata = [{"source": pdf_file.name, "chunk_id": i, "chunk_text": chunk} for i, chunk in enumerate(chunks)]
+            vecs = embedding_model.encode(chunks, convert_to_numpy=True)
+            index.add(vecs.astype("float32"))
+            metadata.extend(new_metadata)
+            # Save updated index/metadata
+            save_chat_index(chat_id, index)
+            save_chat_metadata(chat_id, metadata)
+            # Update or create knowledge graph
+            build_graph(full_text, doc_id=pdf_file.name)
+            if hasattr(chat, 'knowledge_graph'):
+                chat.knowledge_graph.graph_data = {"info": f"Updated with {pdf_file.name}"}
+                chat.knowledge_graph.save()
+            else:
+                KnowledgeGraph.objects.create(chat=chat, graph_data={"info": f"Created with {pdf_file.name}"})
+        except Exception as e:
+            # Optionally, clean up file
+            if os.path.exists(file_path):
+                os.remove(file_path)
+            return Response({"error": f"Ingestion failed: {str(e)}"}, status=500)
+        return Response({"message": "PDF uploaded and knowledge graph updated", "chat_id": chat.id})
+
+class ChatQueryView(APIView):
     authentication_classes = [JWTAuthentication]
     permission_classes = [IsAuthenticated]
 
-    def post(self, request):
+    def post(self, request, chat_id):
+        chat = get_object_or_404(Chat, id=chat_id, user=request.user)
+        question = request.data.get("question")
+        if not question:
+            return Response({"error": "No question provided"}, status=400)
         try:
-            question = request.data.get("question")
-            if not question:
-                return Response({"error": "No question provided"}, status=400)
-            answer = rag_service.query(question)
+            # Load per-chat index/metadata
+            index = get_chat_index(chat_id)
+            metadata = get_chat_metadata(chat_id)
+            if not metadata or index.ntotal == 0:
+                return Response({"error": "No knowledge available for this chat. Upload PDFs first."}, status=400)
+            q_emb = embedding_model.encode([question], convert_to_numpy=True).astype('float32')
+            top_k = min(TOP_K, len(metadata))
+            distances, indices = index.search(q_emb, top_k)
+            context = [metadata[idx]["chunk_text"] for idx in indices[0] if idx < len(metadata)]
+            answer = answer_with_gemini(question, context)
             return Response({"answer": answer})
         except Exception as e:
             return Response({"error": str(e)}, status=500)
-    def get(self, request):
-        return Response({"error": "Only POST allowed"}, status=405)
-    def put(self, request):
-        return Response({"error": "Only POST allowed"}, status=405)
-    def delete(self, request):
-        return Response({"error": "Only POST allowed"}, status=405)
 
 class ChatListCreateView(APIView):
     authentication_classes = [JWTAuthentication]
@@ -288,49 +368,6 @@ class KnowledgeGraphRetrieveView(APIView):
             serializer = KnowledgeGraphSerializer(chat.knowledge_graph)
             return Response(serializer.data)
         return Response({'error': 'No knowledge graph for this chat.'}, status=404)
-
-# Update UploadPDFView to create Chat and KnowledgeGraph
-class UploadPDFView(APIView):
-    authentication_classes = [JWTAuthentication]
-    permission_classes = [IsAuthenticated]
-    parser_classes = [MultiPartParser, FormParser]
-
-    def post(self, request):
-        pdf_file = request.FILES.get("file")
-        chat_name = request.data.get("chat_name") or pdf_file.name
-        if not pdf_file:
-            return Response({"error": "No file uploaded"}, status=400)
-        save_dir = MEDIA_DIR
-        os.makedirs(save_dir, exist_ok=True)
-        save_path = os.path.join(save_dir, pdf_file.name)
-        file_path = default_storage.save(save_path, ContentFile(pdf_file.read()))
-        # Create Chat
-        chat = Chat.objects.create(user=request.user, name=chat_name)
-        # Ingest the single PDF and create per-file metadata
-        try:
-            chunks, full_text = extract_and_chunk(file_path)
-            metadata = [{"source": pdf_file.name, "chunk_id": i, "chunk_text": chunk} for i, chunk in enumerate(chunks)]
-            embed_and_index(chunks, metadata)
-            build_graph(full_text, doc_id=pdf_file.name)
-            # Save per-file metadata
-            metadata_path = os.path.join(save_dir, f"{os.path.splitext(pdf_file.name)[0]}_metadata.json")
-            with open(metadata_path, "w", encoding="utf-8") as f:
-                json.dump(metadata, f, indent=2, ensure_ascii=False)
-            # Optionally, update global index/metadata as well
-            save_faiss_index(INDEX_PATH)
-            save_metadata_json(METADATA_PATH)
-            # Store knowledge graph (for demo, just store metadata, but you can store graph structure)
-            KnowledgeGraph.objects.create(chat=chat, graph_data={"metadata_path": metadata_path})
-        except Exception as e:
-            chat.delete()
-            return Response({"error": f"Ingestion failed: {str(e)}"}, status=500)
-        return Response({"message": "PDF uploaded, chat and knowledge graph created successfully", "chat_id": chat.id})
-    def get(self, request):
-        return Response({"error": "Only POST allowed"}, status=405)
-    def put(self, request):
-        return Response({"error": "Only POST allowed"}, status=405)
-    def delete(self, request):
-        return Response({"error": "Only POST allowed"}, status=405)
 
 
 
