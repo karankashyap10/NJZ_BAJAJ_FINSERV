@@ -3,7 +3,7 @@ import { MessageSquare, Network, Sun, Moon, Settings, ChevronLeft, ChevronRight 
 import Icon from '../atoms/icons';
 import Button from '../atoms/buttons';
 import { useNavigate } from 'react-router-dom';
-const ChatHeader = ({ title = "NJZ Chat", onShowGraph, onToggleSidebar, isSidebarCollapsed }) => {
+const ChatHeader = ({ title = "NJZ Chat", onShowGraph, onToggleSidebar, isSidebarCollapsed, user, handleLogout }) => {
   const navigate = useNavigate();
   const handleLogin = () => {
     navigate('/login', { state: { from: window.location.pathname } });
@@ -27,11 +27,16 @@ const ChatHeader = ({ title = "NJZ Chat", onShowGraph, onToggleSidebar, isSideba
             Show RAG Graph
           </Button>
 
-
-
-          <Button variant="primary" size="sm" onClick={handleLogin} className="border-[#39FF14] text-[#39FF14] bg-transparent hover:bg-[#23232b]">
-            Login / Signup
-          </Button>
+          {user ? (
+            <div className="flex items-center gap-4">
+              <span className="text-cyan-700 font-semibold">Hello, {user.username}</span>
+              <Button variant="primary" size="sm" onClick={handleLogout} className="bg-cyan-300 text-cyan-900 font-bold hover:bg-cyan-400">Logout</Button>
+            </div>
+          ) : (
+            <Button variant="primary" size="sm" onClick={handleLogin} className="border-[#39FF14] text-[#39FF14] bg-transparent hover:bg-[#23232b]">
+              Login / Signup
+            </Button>
+          )}
         </div>
       </div>
     </div>

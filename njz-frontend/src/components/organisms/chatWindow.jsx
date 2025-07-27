@@ -4,13 +4,51 @@ import Icon from '../atoms/icons';
 import MessageBubble from '../molecules/messageBubble';
 import ChatInputBox from '../molecules/chatInputbox';
 import ChatHeader from '../molecules/chatHeader';
+import axios from 'axios';
 
-const ChatWindow = ({ messages, isLoading, message, setMessage, onSendMessage, onFileUpload, files = [], onFileRemove, onShowGraph, onToggleSidebar, isSidebarCollapsed, disabled }) => {
+const API_BASE = 'http://localhost:8000';
+function getAuthHeaders() {
+  const token = localStorage.getItem('accessToken');
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
+const ChatWindow = ({ messages, isLoading, message, setMessage, onSendMessage, onFileUpload, files = [], onFileRemove, onShowGraph, onToggleSidebar, isSidebarCollapsed, disabled, selectedChatId, user, handleLogout }) => {
   const messagesEndRef = useRef(null);
+  const [localMessages, setLocalMessages] = React.useState(messages);
+  const [loading, setLoading] = React.useState(false);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages]);
+  }, [localMessages]);
+
+  const handleSend = async () => {
+    if (!message.trim() || !selectedChatId) return;
+    const userMessage = {
+      content: message,
+      sender: 'user',
+      timestamp: new Date()
+    };
+    setLocalMessages(prev => [...prev, userMessage]);
+    setMessage('');
+    setLoading(true);
+    try {
+      const res = await axios.post(`${API_BASE}/rag/chats/${selectedChatId}/query/`, { question: message }, {
+        headers: {
+          ...getAuthHeaders(),
+          'Content-Type': 'application/json',
+        },
+      });
+      const aiMessage = {
+        content: res.data.answer,
+        sender: 'ai',
+        timestamp: new Date()
+      };
+      setLocalMessages(prev => [...prev, aiMessage]);
+    } catch (err) {
+      setLocalMessages(prev => [...prev, { content: 'Error: Could not get answer from Gemini.', sender: 'ai', timestamp: new Date() }]);
+    }
+    setLoading(false);
+  };
 
   return (
     <div className="flex flex-col h-full">
@@ -18,10 +56,12 @@ const ChatWindow = ({ messages, isLoading, message, setMessage, onSendMessage, o
         onShowGraph={onShowGraph}
         onToggleSidebar={onToggleSidebar}
         isSidebarCollapsed={isSidebarCollapsed}
+        user={user}
+        handleLogout={handleLogout}
       />
 
       <div className="flex-1 overflow-y-auto p-8 bg-[#18181b]" style={{ borderLeft: '1px solid #23232b' }}>
-        {messages.length === 0 ? (
+        {localMessages.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-full text-center">
             <Icon icon={MessageSquare} size="lg" className="text-gray-400 mb-4" />
             <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-2">
@@ -33,7 +73,7 @@ const ChatWindow = ({ messages, isLoading, message, setMessage, onSendMessage, o
           </div>
         ) : (
           <>
-            {messages.map((msg, index) => (
+            {localMessages.map((msg, index) => (
               <MessageBubble
                 key={index}
                 message={msg.content}
@@ -41,7 +81,7 @@ const ChatWindow = ({ messages, isLoading, message, setMessage, onSendMessage, o
                 sender={msg.sender}
               />
             ))}
-            {isLoading && (
+            {loading && (
               <MessageBubble
                 message=""
                 timestamp={new Date()}
@@ -57,11 +97,11 @@ const ChatWindow = ({ messages, isLoading, message, setMessage, onSendMessage, o
       <ChatInputBox
         message={message}
         setMessage={setMessage}
-        onSend={onSendMessage}
+        onSend={handleSend}
         onFileUpload={onFileUpload}
         files={files}
         onFileRemove={onFileRemove}
-        disabled={disabled}
+        disabled={false}
       />
     </div>
   );

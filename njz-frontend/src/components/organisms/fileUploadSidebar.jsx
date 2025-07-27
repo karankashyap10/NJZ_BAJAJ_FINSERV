@@ -4,8 +4,71 @@ import Icon from '../atoms/icons';
 import Button from '../atoms/buttons';
 import Divider from '../atoms/divider';
 import FileUploadField from '../molecules/fileUpload';
+import axios from 'axios';
 
-const FileUploadSidebar = ({ files, onFileUpload, onFileRemove, chatHistory, onChatSelect, selectedChatId, isCollapsed, onToggleCollapse }) => {
+const API_BASE = 'http://localhost:8000';
+function getAuthHeaders() {
+  const token = localStorage.getItem('accessToken');
+  console.log(token);
+  return { Authorization: `Bearer ${token}` };
+}
+
+const FileUploadSidebar = ({ files, onFileUpload, onFileRemove, chatHistory, onChatSelect, selectedChatId, isCollapsed, onToggleCollapse, onCreateChat }) => {
+  const [uploading, setUploading] = React.useState(false);
+  const [uploadError, setUploadError] = React.useState(null);
+  const [newChatName, setNewChatName] = React.useState('');
+
+  const handleUpload = async (file) => {
+  if (!selectedChatId) {
+    setUploadError('Please select a chat first.');
+    return;
+  }
+
+  const headers = getAuthHeaders();
+  if (!headers) {
+    setUploadError('You are not authenticated. Please log in.');
+    return;
+  }
+
+  setUploading(true);
+  setUploadError(null);
+  const formData = new FormData();
+  formData.append('file', file);
+
+  try {
+    await axios.post(`${API_BASE}/rag/chats/${selectedChatId}/upload_pdf/`, formData, {
+      headers: {
+        ...headers,
+        'Content-Type': 'multipart/form-data',
+      },
+    });
+  } catch (err) {
+    console.error('Upload error:', err);
+    setUploadError(
+      err.response?.data?.detail || 'Upload failed. Please try again.'
+    );
+  } finally {
+    setUploading(false);
+  }
+};
+
+
+
+
+  const handleFileUploadWrapper = (newFiles) => {
+    onFileUpload(newFiles);
+    if (newFiles.length > 0) {
+      handleUpload(newFiles[0]);
+    }
+  };
+
+  const handleCreateChatClick = () => {
+    if (newChatName.trim()) {
+      onCreateChat(newChatName.trim());
+      setNewChatName('');
+    }
+  };
+
   return (
     <div className={`${isCollapsed ? 'w-16' : 'w-80'} transition-all duration-300 ease-in-out border-r border-[#23232b] bg-[#18181b] flex flex-col h-full`}>
       {/* Collapsed state - show only icons */}
@@ -38,11 +101,25 @@ const FileUploadSidebar = ({ files, onFileUpload, onFileRemove, chatHistory, onC
                 <Icon icon={ChevronLeft} />
               </Button>
             </div>
+            <div className="flex mb-2 gap-2">
+              <input
+                type="text"
+                placeholder="New chat name"
+                value={newChatName}
+                onChange={e => setNewChatName(e.target.value)}
+                className="flex-1 px-2 py-1 rounded bg-[#23232b] border border-cyan-300 text-cyan-300"
+              />
+              <Button variant="primary" size="sm" onClick={handleCreateChatClick}>
+                +
+              </Button>
+            </div>
             <FileUploadField
               files={files}
-              onFileUpload={onFileUpload}
+              onFileUpload={handleFileUploadWrapper}
               onFileRemove={onFileRemove}
             />
+            {uploading && <div className="text-xs text-blue-400 mt-2">Uploading...</div>}
+            {uploadError && <div className="text-xs text-red-400 mt-2">{uploadError}</div>}
           </div>
 
           <Divider />
