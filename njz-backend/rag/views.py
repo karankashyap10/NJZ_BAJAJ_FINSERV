@@ -39,7 +39,7 @@ index = faiss.IndexFlatL2(d)
 nlp = spacy.load("en_core_web_sm")
 
 # Neo4j connection
-driver = GraphDatabase.driver("bolt://localhost:7687", auth=("neo4j", "abcdefgh"))
+driver = GraphDatabase.driver("bolt://localhost:7687", auth=("neo4j", "12345678"))
 
 # ========== TEXT EXTRACTION & CHUNKING ==========
 # ========== TEXT EXTRACTION & SMART CHUNKING ==========
@@ -287,8 +287,7 @@ class UploadPDFToChatView(APIView):
         pdf_file = request.FILES.get("file")
         if not pdf_file:
             return Response({"error": "No file uploaded"}, status=400)
-        chat_dir = get_chat_dir(chat_id)
-        save_path = os.path.join(chat_dir, pdf_file.name)
+        save_path = os.path.join(f"chat_{chat_id}", pdf_file.name)
         relative_path = default_storage.save(save_path, ContentFile(pdf_file.read()))
         file_path = default_storage.path(relative_path)
         try:

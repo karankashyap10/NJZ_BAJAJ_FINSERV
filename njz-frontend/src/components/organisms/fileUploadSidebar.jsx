@@ -7,11 +7,10 @@ import FileUploadField from '../molecules/fileUpload';
 import axios from 'axios';
 
 const API_BASE = 'http://localhost:8000';
-function getAuthHeaders() {
-  const token = localStorage.getItem('accessToken');
-  console.log(token);
-  return { Authorization: `Bearer ${token}` };
-}
+
+const token = localStorage.getItem('accessToken');
+console.log(token);
+  
 
 const FileUploadSidebar = ({ files, onFileUpload, onFileRemove, chatHistory, onChatSelect, selectedChatId, isCollapsed, onToggleCollapse, onCreateChat }) => {
   const [uploading, setUploading] = React.useState(false);
@@ -24,8 +23,7 @@ const FileUploadSidebar = ({ files, onFileUpload, onFileRemove, chatHistory, onC
     return;
   }
 
-  const headers = getAuthHeaders();
-  if (!headers) {
+  if (!token) {
     setUploadError('You are not authenticated. Please log in.');
     return;
   }
@@ -38,7 +36,7 @@ const FileUploadSidebar = ({ files, onFileUpload, onFileRemove, chatHistory, onC
   try {
     await axios.post(`${API_BASE}/rag/chats/${selectedChatId}/upload_pdf/`, formData, {
       headers: {
-        ...headers,
+        "Authorization":`Bearer ${token}`,
         'Content-Type': 'multipart/form-data',
       },
     });

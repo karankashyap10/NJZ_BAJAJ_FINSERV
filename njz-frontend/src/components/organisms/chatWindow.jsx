@@ -7,10 +7,9 @@ import ChatHeader from '../molecules/chatHeader';
 import axios from 'axios';
 
 const API_BASE = 'http://localhost:8000';
-function getAuthHeaders() {
-  const token = localStorage.getItem('accessToken');
-  return token ? { Authorization: `Bearer ${token}` } : {};
-}
+
+const token = localStorage.getItem('accessToken');
+  
 
 const ChatWindow = ({ messages, isLoading, message, setMessage, onSendMessage, onFileUpload, files = [], onFileRemove, onShowGraph, onToggleSidebar, isSidebarCollapsed, disabled, selectedChatId, user, handleLogout }) => {
   const messagesEndRef = useRef(null);
@@ -34,7 +33,7 @@ const ChatWindow = ({ messages, isLoading, message, setMessage, onSendMessage, o
     try {
       const res = await axios.post(`${API_BASE}/rag/chats/${selectedChatId}/query/`, { question: message }, {
         headers: {
-          ...getAuthHeaders(),
+          "Authorization":`Bearer ${token}`,
           'Content-Type': 'application/json',
         },
       });
