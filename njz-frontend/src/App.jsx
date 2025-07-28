@@ -99,9 +99,35 @@ const App = () => {
     setFiles(prev => prev.filter((_, i) => i !== index));
   };
 
-  const handleChatSelect = (chatId) => {
+  const handleChatSelect = async (chatId) => {
     setSelectedChatId(chatId);
-    // In a real app, load the chat history here
+    setMessages([]); // Clear messages while loading
+    try {
+      console.log('Fetching messages for chat:', chatId);
+      const res = await axios.get(`${API_BASE}/rag/chats/${chatId}/query/`, {
+        headers: {
+          ...getAuthHeaders(),
+        },
+      });
+      console.log('Backend response:', res.data);
+      const messages = res.data.messages || [];
+      console.log('Parsed messages:', messages);
+      // Convert backend message format to frontend format
+      const parsedMessages = messages.map(msg => ({
+        content: msg.content,
+        sender: msg.sender,
+        timestamp: new Date(msg.timestamp)
+      }));
+      console.log('Final parsed messages:', parsedMessages);
+      setMessages(parsedMessages);
+    } catch (err) {
+      console.error('Error fetching chat messages:', err);
+      setMessages([]);
+    }
+  };
+
+  const handleSendMessage = (newMessages) => {
+    setMessages(newMessages);
   };
 
   const handleToggleSidebar = () => {
@@ -151,7 +177,7 @@ const App = () => {
             isLoading={isLoading}
             message={currentMessage}
             setMessage={setCurrentMessage}
-            onSendMessage={() => { }}
+            onSendMessage={handleSendMessage}
             onFileUpload={handleFileUpload}
             files={files}
             onFileRemove={handleFileRemove}

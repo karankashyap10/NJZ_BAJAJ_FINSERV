@@ -6,6 +6,7 @@ from django.contrib.auth.models import User
 class Chat(models.Model):
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='chats')
     name = models.CharField(max_length=255)
+    messages = models.JSONField(default=list, blank=True)  # Store structured message data
     created_at = models.DateTimeField(auto_now_add=True)
 
 class KnowledgeGraph(models.Model):

@@ -16,20 +16,29 @@ const ChatWindow = ({ messages, isLoading, message, setMessage, onSendMessage, o
   const [localMessages, setLocalMessages] = React.useState(messages);
   const [loading, setLoading] = React.useState(false);
 
+  // Update local messages when parent messages change (when chat is selected)
+  useEffect(() => {
+    setLocalMessages(messages);
+  }, [messages]);
+
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [localMessages]);
 
   const handleSend = async () => {
     if (!message.trim() || !selectedChatId) return;
+    
     const userMessage = {
       content: message,
       sender: 'user',
       timestamp: new Date()
     };
+    
+    // Add user message immediately for better UX
     setLocalMessages(prev => [...prev, userMessage]);
     setMessage('');
     setLoading(true);
+    
     try {
       const res = await axios.post(`${API_BASE}/rag/chats/${selectedChatId}/query/`, { question: message }, {
         headers: {
@@ -37,14 +46,28 @@ const ChatWindow = ({ messages, isLoading, message, setMessage, onSendMessage, o
           'Content-Type': 'application/json',
         },
       });
+      
       const aiMessage = {
         content: res.data.answer,
         sender: 'ai',
         timestamp: new Date()
       };
+      
+      // Add AI response to local messages
       setLocalMessages(prev => [...prev, aiMessage]);
+      
+      // Also update parent messages to keep them in sync
+      if (onSendMessage) {
+        onSendMessage([...localMessages, userMessage, aiMessage]);
+      }
+      
     } catch (err) {
-      setLocalMessages(prev => [...prev, { content: 'Error: Could not get answer from Gemini.', sender: 'ai', timestamp: new Date() }]);
+      const errorMessage = {
+        content: 'Error: Could not get answer from Gemini.',
+        sender: 'ai',
+        timestamp: new Date()
+      };
+      setLocalMessages(prev => [...prev, errorMessage]);
     }
     setLoading(false);
   };

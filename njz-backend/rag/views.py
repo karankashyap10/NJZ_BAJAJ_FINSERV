@@ -27,6 +27,7 @@ from .models import Chat, KnowledgeGraph
 from .serializers import ChatSerializer, KnowledgeGraphSerializer
 from django.shortcuts import get_object_or_404
 import shutil
+from datetime import datetime
 
 # Load local embedding model (downloaded once, then reused)
 embedding_model = SentenceTransformer("all-MiniLM-L6-v2")  # ~384 dims
@@ -337,9 +338,32 @@ class ChatQueryView(APIView):
             distances, indices = index.search(q_emb, top_k)
             context = [metadata[idx]["chunk_text"] for idx in indices[0] if idx < len(metadata)]
             answer = answer_with_gemini(question, context)
+            
+            # Create structured message objects
+            user_message = {
+                "content": question,
+                "sender": "user",
+                "timestamp": str(datetime.now())
+            }
+            ai_message = {
+                "content": answer,
+                "sender": "ai", 
+                "timestamp": str(datetime.now())
+            }
+            
+            # Append messages to chat
+            if not chat.messages:
+                chat.messages = []
+            chat.messages.extend([user_message, ai_message])
+            chat.save()
+            
             return Response({"answer": answer})
         except Exception as e:
             return Response({"error": str(e)}, status=500)
+
+    def get(self, request, chat_id):
+        chat = get_object_or_404(Chat, id=chat_id, user=request.user)
+        return Response({"messages": chat.messages or []})
 
 class ChatListCreateView(APIView):
     authentication_classes = [JWTAuthentication]
