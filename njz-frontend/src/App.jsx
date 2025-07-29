@@ -87,17 +87,36 @@ const App = () => {
     }
   };
 
-  const handleFileUpload = (newFiles) => {
+  const handleFileUpload = async (newFiles) => {
     const validFiles = newFiles.filter(file =>
       file.type === 'application/pdf' ||
       file.name.endsWith('.docx')
     );
     setFiles(prev => [...prev, ...validFiles]);
-    setMessages(prev => [...prev, {
+    
+    const uploadMessage = {
       content: `📎 Uploaded file: ${validFiles.map(file => file.name).join(', ')}`,
       sender: 'user',
       timestamp: new Date()
-    }]);
+    };
+    
+    setMessages(prev => [...prev, uploadMessage]);
+    
+    // Send message to backend if a chat is selected
+    if (selectedChatId) {
+      try {
+        await axios.post(`${API_BASE}/rag/chats/${selectedChatId}/messages/`, {
+          content: uploadMessage.content,
+          sender: uploadMessage.sender
+        }, {
+          headers: {
+            ...getAuthHeaders(),
+          },
+        });
+      } catch (err) {
+        console.error('Error storing file upload message:', err);
+      }
+    }
   };
 
   const handleFileRemove = (index) => {
@@ -109,7 +128,7 @@ const App = () => {
     setMessages([]); // Clear messages while loading
     try {
       console.log('Fetching messages for chat:', chatId);
-      const res = await axios.get(`${API_BASE}/rag/chats/${chatId}/query/`, {
+      const res = await axios.get(`${API_BASE}/rag/chats/${chatId}/messages/`, {
         headers: {
           ...getAuthHeaders(),
         },
@@ -137,7 +156,7 @@ const App = () => {
     if (selectedChatId) {
       setChatHistory(prev => prev.map(chat =>
         chat.id === selectedChatId
-          ? { ...chat, messageCount: newMessages.length }
+          ? { ...chat, messageCount: newMessages.length, lastUpdated: new Date().toISOString() }
           : chat
       ));
     }

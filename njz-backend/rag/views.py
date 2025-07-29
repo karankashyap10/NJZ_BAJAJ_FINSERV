@@ -392,5 +392,39 @@ class KnowledgeGraphRetrieveView(APIView):
             return Response(serializer.data)
         return Response({'error': 'No knowledge graph for this chat.'}, status=404)
 
+class ChatMessageView(APIView):
+    authentication_classes = [JWTAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, chat_id):
+        chat = get_object_or_404(Chat, id=chat_id, user=request.user)
+        content = request.data.get("content")
+        sender = request.data.get("sender", "user")
+        
+        if not content:
+            return Response({"error": "No content provided"}, status=400)
+        
+        try:
+            # Create structured message object
+            message = {
+                "content": content,
+                "sender": sender,
+                "timestamp": str(datetime.now())
+            }
+            
+            # Append message to chat
+            if not chat.messages:
+                chat.messages = []
+            chat.messages.append(message)
+            chat.save()
+            
+            return Response({"message": "Message stored successfully"})
+        except Exception as e:
+            return Response({"error": str(e)}, status=500)
+
+    def get(self, request, chat_id):
+        chat = get_object_or_404(Chat, id=chat_id, user=request.user)
+        return Response({"messages": chat.messages or []})
+
 
 

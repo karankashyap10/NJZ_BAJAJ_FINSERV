@@ -54,11 +54,12 @@ const ChatWindow = ({ messages, isLoading, message, setMessage, onSendMessage, o
       };
 
       // Add AI response to local messages
-      setLocalMessages(prev => [...prev, aiMessage]);
+      const updatedMessages = [...localMessages, userMessage, aiMessage];
+      setLocalMessages(updatedMessages);
 
-      // Also update parent messages to keep them in sync
+      // Update parent component's message state
       if (onSendMessage) {
-        onSendMessage([...localMessages, userMessage, aiMessage]);
+        onSendMessage(updatedMessages);
       }
 
     } catch (err) {
@@ -67,7 +68,14 @@ const ChatWindow = ({ messages, isLoading, message, setMessage, onSendMessage, o
         sender: 'ai',
         timestamp: new Date()
       };
-      setLocalMessages(prev => [...prev, errorMessage]);
+      const updatedMessages = [...localMessages, userMessage, errorMessage];
+      setLocalMessages(updatedMessages);
+      
+      // Update parent component's message state even on error
+      if (onSendMessage) {
+        onSendMessage(updatedMessages);
+      }
+      
       console.log(err);
     }
     setLoading(false);
