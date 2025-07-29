@@ -9,9 +9,9 @@ import axios from 'axios';
 const API_BASE = 'http://localhost:8000';
 
 const token = localStorage.getItem('accessToken');
-  
 
-const ChatWindow = ({ messages, isLoading, message, setMessage, onSendMessage, onFileUpload, files = [], onFileRemove, onShowGraph, onToggleSidebar, isSidebarCollapsed, disabled, selectedChatId, user, handleLogout }) => {
+
+const ChatWindow = ({ messages, isLoading, message, setMessage, onSendMessage, onFileUpload, files = [], onFileRemove, onShowGraph, onToggleSidebar, isSidebarCollapsed, disabled, selectedChatId, user, handleLogout, onCreateChat }) => {
   const messagesEndRef = useRef(null);
   const [localMessages, setLocalMessages] = React.useState(messages);
   const [loading, setLoading] = React.useState(false);
@@ -27,40 +27,40 @@ const ChatWindow = ({ messages, isLoading, message, setMessage, onSendMessage, o
 
   const handleSend = async () => {
     if (!message.trim() || !selectedChatId) return;
-    
+
     const userMessage = {
       content: message,
       sender: 'user',
       timestamp: new Date()
     };
-    
+
     // Add user message immediately for better UX
     setLocalMessages(prev => [...prev, userMessage]);
     setMessage('');
     setLoading(true);
-    
+
     try {
       const res = await axios.post(`${API_BASE}/rag/chats/${selectedChatId}/query/`, { question: message }, {
         headers: {
-          "Authorization":`Bearer ${token}`,
+          "Authorization": `Bearer ${token}`,
           'Content-Type': 'application/json',
         },
       });
-      
+
       const aiMessage = {
         content: res.data.answer,
         sender: 'ai',
         timestamp: new Date()
       };
-      
+
       // Add AI response to local messages
       setLocalMessages(prev => [...prev, aiMessage]);
-      
+
       // Also update parent messages to keep them in sync
       if (onSendMessage) {
         onSendMessage([...localMessages, userMessage, aiMessage]);
       }
-      
+
     } catch (err) {
       const errorMessage = {
         content: 'Error: Could not get answer from Gemini.',
@@ -68,6 +68,7 @@ const ChatWindow = ({ messages, isLoading, message, setMessage, onSendMessage, o
         timestamp: new Date()
       };
       setLocalMessages(prev => [...prev, errorMessage]);
+      console.log(err);
     }
     setLoading(false);
   };
@@ -124,6 +125,8 @@ const ChatWindow = ({ messages, isLoading, message, setMessage, onSendMessage, o
         files={files}
         onFileRemove={onFileRemove}
         disabled={false}
+        onCreateChat={onCreateChat}
+        selectedChatId={selectedChatId}
       />
     </div>
   );

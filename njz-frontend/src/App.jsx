@@ -26,7 +26,6 @@ const App = () => {
   const [selectedChatId, setSelectedChatId] = useState(null);
   const [graphData, setGraphData] = useState({});
   const [user, setUser] = useState(null);
-
   // Fetch chat history on mount
   React.useEffect(() => {
     async function fetchChats() {
@@ -39,11 +38,11 @@ const App = () => {
         setChatHistory(res.data.map(chat => ({
           id: chat.id,
           title: chat.name,
-          messageCount: 0,
+          messageCount: chat.messages ? chat.messages.length : 0,
           lastUpdated: chat.created_at
         })));
       } catch (err) {
-        // Optionally handle error
+        console.err(err);
       }
     }
     fetchChats();
@@ -58,6 +57,7 @@ const App = () => {
         setUser({ username: decoded.username || decoded.user_name || decoded.email || 'User' });
       } catch (e) {
         setUser(null);
+        console.err(e);
       }
     } else {
       setUser(null);
@@ -77,13 +77,13 @@ const App = () => {
         {
           id: chat.id,
           title: chat.name,
-          messageCount: 0,
+          messageCount: chat.messages ? chat.messages.length : 0,
           lastUpdated: chat.created_at
         }
       ]);
       setSelectedChatId(chat.id);
     } catch (err) {
-      // Optionally handle error
+      console.log(err);
     }
   };
 
@@ -93,6 +93,11 @@ const App = () => {
       file.name.endsWith('.docx')
     );
     setFiles(prev => [...prev, ...validFiles]);
+    setMessages(prev => [...prev, {
+      content: `📎 Uploaded file: ${validFiles.map(file => file.name).join(', ')}`,
+      sender: 'user',
+      timestamp: new Date()
+    }]);
   };
 
   const handleFileRemove = (index) => {
@@ -128,6 +133,14 @@ const App = () => {
 
   const handleSendMessage = (newMessages) => {
     setMessages(newMessages);
+    // Update message count in chat history
+    if (selectedChatId) {
+      setChatHistory(prev => prev.map(chat =>
+        chat.id === selectedChatId
+          ? { ...chat, messageCount: newMessages.length }
+          : chat
+      ));
+    }
   };
 
   const handleToggleSidebar = () => {
@@ -145,6 +158,7 @@ const App = () => {
       setGraphData(res.data.graph_data || {});
     } catch (err) {
       setGraphData({ error: 'Could not fetch knowledge graph.' });
+      console.err(err);
     }
     setIsGraphModalOpen(true);
   };
@@ -188,6 +202,7 @@ const App = () => {
             selectedChatId={selectedChatId}
             user={user}
             handleLogout={handleLogout}
+            onCreateChat={handleCreateChat}
           />
         </div>
 

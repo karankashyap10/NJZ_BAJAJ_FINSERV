@@ -10,7 +10,7 @@ const API_BASE = 'http://localhost:8000';
 
 const token = localStorage.getItem('accessToken');
 console.log(token);
-  
+
 
 const FileUploadSidebar = ({ files, onFileUpload, onFileRemove, chatHistory, onChatSelect, selectedChatId, isCollapsed, onToggleCollapse, onCreateChat }) => {
   const [uploading, setUploading] = React.useState(false);
@@ -18,37 +18,37 @@ const FileUploadSidebar = ({ files, onFileUpload, onFileRemove, chatHistory, onC
   const [newChatName, setNewChatName] = React.useState('');
 
   const handleUpload = async (file) => {
-  if (!selectedChatId) {
-    setUploadError('Please select a chat first.');
-    return;
-  }
+    if (!selectedChatId) {
+      setUploadError('Please select a chat first.');
+      return;
+    }
 
-  if (!token) {
-    setUploadError('You are not authenticated. Please log in.');
-    return;
-  }
+    if (!token) {
+      setUploadError('You are not authenticated. Please log in.');
+      return;
+    }
 
-  setUploading(true);
-  setUploadError(null);
-  const formData = new FormData();
-  formData.append('file', file);
+    setUploading(true);
+    setUploadError(null);
+    const formData = new FormData();
+    formData.append('file', file);
 
-  try {
-    await axios.post(`${API_BASE}/rag/chats/${selectedChatId}/upload_pdf/`, formData, {
-      headers: {
-        "Authorization":`Bearer ${token}`,
-        'Content-Type': 'multipart/form-data',
-      },
-    });
-  } catch (err) {
-    console.error('Upload error:', err);
-    setUploadError(
-      err.response?.data?.detail || 'Upload failed. Please try again.'
-    );
-  } finally {
-    setUploading(false);
-  }
-};
+    try {
+      await axios.post(`${API_BASE}/rag/chats/${selectedChatId}/upload_pdf/`, formData, {
+        headers: {
+          "Authorization": `Bearer ${token}`,
+          'Content-Type': 'multipart/form-data',
+        },
+      });
+    } catch (err) {
+      console.error('Upload error:', err);
+      setUploadError(
+        err.response?.data?.detail || 'Upload failed. Please try again.'
+      );
+    } finally {
+      setUploading(false);
+    }
+  };
 
 
 
