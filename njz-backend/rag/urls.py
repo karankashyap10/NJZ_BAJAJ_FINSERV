@@ -5,6 +5,7 @@ from .views import (
     ChatQueryView,
     KnowledgeGraphRetrieveView,
     ChatMessageView,
+    HackRxRunView,
 )
 
 app_name = 'rag'
@@ -15,4 +16,5 @@ urlpatterns = [
     path('chats/<int:chat_id>/query/', ChatQueryView.as_view(), name='chat_query'),
     path('chats/<int:chat_id>/messages/', ChatMessageView.as_view(), name='chat_message'),
     path('chats/<int:chat_id>/knowledge_graph/', KnowledgeGraphRetrieveView.as_view(), name='knowledge_graph_retrieve'),
+    path('hackrx/run', HackRxRunView.as_view(), name='hackrx_run'),
 ]

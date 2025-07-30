@@ -28,6 +28,10 @@ from .serializers import ChatSerializer, KnowledgeGraphSerializer
 from django.shortcuts import get_object_or_404
 import shutil
 from datetime import datetime
+import requests
+import tempfile
+
+
 
 # Load local embedding model (downloaded once, then reused)
 embedding_model = SentenceTransformer("all-MiniLM-L6-v2")  # ~384 dims
@@ -428,3 +432,68 @@ class ChatMessageView(APIView):
 
 
 
+#hackrx
+class HackRxRunView(APIView):
+    # authentication_classes = [JWTAuthentication]
+    # permission_classes = [IsAuthenticated]
+
+    def post(self, request, *args, **kwargs):
+        """
+        Expects format:
+        {
+            "documents": "https://host/some.pdf",
+            "questions": [
+                "What ... ?", "Explain ... ?", ...
+            ]
+        }
+        Returns:
+        {
+            "answers": [ "answer1", "answer2", ... ]
+        }
+        """
+        documents_url = request.data.get('documents')
+        questions = request.data.get('questions')
+
+        if not documents_url or not isinstance(questions, list) or not questions:
+            return Response({"error": "Payload must include 'documents' (url) and 'questions' (list)."}, status=400)
+
+        # Download PDF (simple version)
+        try:
+            response = requests.get(documents_url)
+            response.raise_for_status()
+        except Exception as e:
+            return Response({"error": f"Could not download document: {e}"}, status=400)
+
+        # Save to temp file
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as temp_pdf:
+            temp_pdf.write(response.content)
+            temp_pdf_path = temp_pdf.name
+
+        # 1. Extract, chunk
+        try:
+            chunks, full_text = extract_and_chunk(temp_pdf_path)
+            metadata = [{"source": os.path.basename(temp_pdf_path), "chunk_id": i, "chunk_text": chunk} for i, chunk in enumerate(chunks)]
+            vecs = embedding_model.encode(chunks, convert_to_numpy=True)
+            temp_index = faiss.IndexFlatL2(embedding_model.get_sentence_embedding_dimension())
+            temp_index.add(vecs.astype("float32"))
+        except Exception as e:
+            os.remove(temp_pdf_path)
+            return Response({"error": f"Error processing PDF: {e}"}, status=500)
+
+        # 2. For each question, retrieve context and answer
+        answers = []
+        for question in questions:
+            try:
+                q_emb = embedding_model.encode([question], convert_to_numpy=True).astype('float32')
+                top_k = min(TOP_K, len(metadata))
+                distances, indices = temp_index.search(q_emb, top_k)
+                context = [metadata[idx]["chunk_text"] for idx in indices[0] if idx < len(metadata)]
+                answer = answer_with_gemini(question, context)
+            except Exception as ex:
+                answer = f"ERROR: {str(ex)}"
+            answers.append(answer)
+
+        # Clean up temp file
+        os.remove(temp_pdf_path)
+
+        return Response({"answers": answers})
