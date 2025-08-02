@@ -30,7 +30,51 @@ import shutil
 from datetime import datetime
 import requests
 import tempfile
+import time
+import functools
+import logging
 
+# Set up logging for timing
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# ========== TIMING DECORATOR ==========
+def timing_decorator(func):
+    """Decorator to track function execution time"""
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        start_time = time.time()
+        result = func(*args, **kwargs)
+        end_time = time.time()
+        execution_time = end_time - start_time
+        logger.info(f"⏱️ {func.__name__} took {execution_time:.4f} seconds")
+        return result
+    return wrapper
+
+# ========== CONTEXT MANAGER FOR TIMING ==========
+class Timer:
+    """Context manager for timing code blocks"""
+    def __init__(self, name):
+        self.name = name
+    
+    def __enter__(self):
+        self.start_time = time.time()
+        return self
+    
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        end_time = time.time()
+        execution_time = end_time - self.start_time
+        logger.info(f"⏱️ {self.name} took {execution_time:.4f} seconds")
+
+# ========== MANUAL TIMING UTILITY ==========
+def track_time(operation_name):
+    """Manual timing utility - returns a function to call when done"""
+    start_time = time.time()
+    def end_tracking():
+        end_time = time.time()
+        execution_time = end_time - start_time
+        logger.info(f"⏱️ {operation_name} took {execution_time:.4f} seconds")
+    return end_tracking
 
 
 # Load local embedding model (downloaded once, then reused)
@@ -51,6 +95,7 @@ driver = GraphDatabase.driver("neo4j+s://e4746836.databases.neo4j.io", auth=("ne
 
 from typing import List
 
+#@timing_decorator
 def semantic_chunking(text: str, max_tokens: int = 400, overlap: int = 100) -> List[str]:
     """
     Split text into semantically meaningful chunks using spaCy sentence boundaries,
@@ -98,6 +143,7 @@ def semantic_chunking(text: str, max_tokens: int = 400, overlap: int = 100) -> L
     return chunks
 
 
+#@timing_decorator
 def extract_and_chunk(file_path: str):
     reader = PdfReader(file_path)
     full_text = "\n\n".join([page.extract_text() or "" for page in reader.pages])
@@ -116,6 +162,7 @@ def save_metadata_json(path="metadata.json"):
         json.dump(all_metadata, f, indent=2, ensure_ascii=False)
     print(f"✅ Saved metadata to {path}")
 
+#@timing_decorator
 def embed_and_index(chunks: List[str], meta: List[dict]):
     vecs = embedding_model.encode(chunks, convert_to_numpy=True)
     index.add(vecs.astype("float32"))
@@ -159,7 +206,8 @@ def ingestion(pdf_folder: str):
             metadata = [{"source": pdf_path.name, "chunk_id": i, "chunk_text": chunk}
                         for i, chunk in enumerate(chunks)]
             embed_and_index(chunks, metadata)
-            build_graph(full_text, doc_id=pdf_path.name)
+            # Knowledge graph creation commented out for now
+            # build_graph(full_text, doc_id=pdf_path.name)
             print(f"✅ Done processing: {pdf_path.name}")
         except Exception as e:
             print(f"❌ Error processing {pdf_path.name}: {e}")
@@ -168,17 +216,7 @@ def ingestion(pdf_folder: str):
     save_faiss_index("faiss_index.idx")
     save_metadata_json("metadata.json")
 
-
-
-import os
-import json
-from typing import List, Tuple
-
-import faiss
-import numpy as np
-from sentence_transformers import SentenceTransformer
-import google.generativeai as genai
-
+# ========== GLOBAL VARIABLES ==========
 MEDIA_DIR = getattr(settings, 'MEDIA_ROOT', 'media')
 os.makedirs(MEDIA_DIR, exist_ok=True)
 INDEX_PATH = os.path.join(MEDIA_DIR, 'faiss_index.idx')
@@ -187,7 +225,6 @@ EMBEDDING_MODEL_NAME = "all-MiniLM-L6-v2"
 TOP_K = 3
 
 genai.configure(api_key="AIzaSyCiAWJw41BYAPi6qs4aJqjID_P3Goj1NQ4")
-# Load FAISS index and metadata
 
 def load_resources() -> Tuple[faiss.IndexFlatL2, List[dict], SentenceTransformer]:
     # load FAISS index
@@ -231,9 +268,10 @@ def retrieve_context(query: str,
 # --------------------------------------------------
 # Ask Gemini with retrieved context
 # --------------------------------------------------
+#@timing_decorator
 def answer_with_gemini(query: str, context: List[str]) -> str:
     prompt = (
-        "You are an expert assistant. Use the following document excerpts to answer the question precisely . keep it as short as possible dont use markdown just give plain text\n\n"
+        "You are an expert assistant. Use the following document excerpts to answer the question precisely . keep it **one liner strictly** and dont use markdown just give plain text\n\n"
         "Excerpts:\n" + "\n---\n".join(context) + "\n\n"
         "Question: " + query + "\nAnswer:"
     )
@@ -306,12 +344,12 @@ def save_chat_index(chat_id, index):
     faiss.write_index(index, path)
 
 class UploadPDFToChatView(APIView):
-    authentication_classes = [JWTAuthentication]
-    permission_classes = [IsAuthenticated]
+    authentication_classes = []  # Disable authentication
+    permission_classes = []  # Disable permissions
     parser_classes = [MultiPartParser, FormParser]
 
     def post(self, request, chat_id):
-        chat = get_object_or_404(Chat, id=chat_id, user=request.user)
+        # chat = get_object_or_404(Chat, id=chat_id, user=request.user)  # Commented for no auth
         pdf_file = request.FILES.get("file")
         if not pdf_file:
             return Response({"error": "No file uploaded"}, status=400)
@@ -319,52 +357,54 @@ class UploadPDFToChatView(APIView):
         relative_path = default_storage.save(save_path, ContentFile(pdf_file.read()))
         file_path = default_storage.path(relative_path)
         try:
-            # Load or create per-chat index/metadata
-            index = get_chat_index(chat_id)
-            metadata = get_chat_metadata(chat_id)
-            # Ingest PDF
-            chunks, full_text = extract_and_chunk(file_path)
-            new_metadata = [{"source": pdf_file.name, "chunk_id": i, "chunk_text": chunk} for i, chunk in enumerate(chunks)]
-            vecs = embedding_model.encode(chunks, convert_to_numpy=True)
-            index.add(vecs.astype("float32"))
-            metadata.extend(new_metadata)
-            # Save updated index/metadata
-            save_chat_index(chat_id, index)
-            save_chat_metadata(chat_id, metadata)
-            # Update or create knowledge graph
-            build_graph(full_text, doc_id=pdf_file.name)
-            if hasattr(chat, 'knowledge_graph'):
-                chat.knowledge_graph.graph_data = {"info": f"Updated with {pdf_file.name}"}
-                chat.knowledge_graph.save()
-            else:
-                KnowledgeGraph.objects.create(chat=chat, graph_data={"info": f"Created with {pdf_file.name}"})
+            with Timer("PDF Upload and Processing"):
+                # Load or create per-chat index/metadata
+                index = get_chat_index(chat_id)
+                metadata = get_chat_metadata(chat_id)
+                # Ingest PDF
+                chunks, full_text = extract_and_chunk(file_path)
+                new_metadata = [{"source": pdf_file.name, "chunk_id": i, "chunk_text": chunk} for i, chunk in enumerate(chunks)]
+                vecs = embedding_model.encode(chunks, convert_to_numpy=True)
+                index.add(vecs.astype("float32"))
+                metadata.extend(new_metadata)
+                # Save updated index/metadata
+                save_chat_index(chat_id, index)
+                save_chat_metadata(chat_id, metadata)
+                # Knowledge graph creation commented out for now
+                # build_graph(full_text, doc_id=pdf_file.name)
+                # if hasattr(chat, 'knowledge_graph'):
+                #     chat.knowledge_graph.graph_data = {"info": f"Updated with {pdf_file.name}"}
+                #     chat.knowledge_graph.save()
+                # else:
+                #     KnowledgeGraph.objects.create(chat=chat, graph_data={"info": f"Created with {pdf_file.name}"})
         except Exception as e:
             # Optionally, clean up file
             if os.path.exists(file_path):
                 os.remove(file_path)
             return Response({"error": f"Ingestion failed: {str(e)}"}, status=500)
-        return Response({"message": "PDF uploaded and knowledge graph updated", "chat_id": chat.id})
+        return Response({"message": "PDF uploaded and knowledge graph updated", "chat_id": chat_id})
 
 class ChatQueryView(APIView):
-    authentication_classes = [JWTAuthentication]
-    permission_classes = [IsAuthenticated]
+    authentication_classes = []  # Disable authentication
+    permission_classes = []  # Disable permissions
 
     def post(self, request, chat_id):
-        chat = get_object_or_404(Chat, id=chat_id, user=request.user)
+        # chat = get_object_or_404(Chat, id=chat_id, user=request.user)  # Commented for no auth
         question = request.data.get("question")
         if not question:
             return Response({"error": "No question provided"}, status=400)
         try:
-            # Load per-chat index/metadata
-            index = get_chat_index(chat_id)
-            metadata = get_chat_metadata(chat_id)
-            if not metadata or index.ntotal == 0:
-                return Response({"error": "No knowledge available for this chat. Upload PDFs first."}, status=400)
-            q_emb = embedding_model.encode([question], convert_to_numpy=True).astype('float32')
-            top_k = min(TOP_K, len(metadata))
-            distances, indices = index.search(q_emb, top_k)
-            context = [metadata[idx]["chunk_text"] for idx in indices[0] if idx < len(metadata)]
-            answer = answer_with_gemini(question, context)
+            with Timer("Chat Query Processing"):
+                # Load per-chat index/metadata
+                index = get_chat_index(chat_id)
+                metadata = get_chat_metadata(chat_id)
+                if not metadata or index.ntotal == 0:
+                    return Response({"error": "No knowledge available for this chat. Upload PDFs first."}, status=400)
+                q_emb = embedding_model.encode([question], convert_to_numpy=True).astype('float32')
+                top_k = min(TOP_K, len(metadata))
+                distances, indices = index.search(q_emb, top_k)
+                context = [metadata[idx]["chunk_text"] for idx in indices[0] if idx < len(metadata)]
+                answer = answer_with_gemini(question, context)
             
             # Create structured message objects
             user_message = {
@@ -378,53 +418,55 @@ class ChatQueryView(APIView):
                 "timestamp": str(datetime.now())
             }
             
-            # Append messages to chat
-            if not chat.messages:
-                chat.messages = []
-            chat.messages.extend([user_message, ai_message])
-            chat.save()
+            # Append messages to chat (commented for no auth)
+            # if not chat.messages:
+            #     chat.messages = []
+            # chat.messages.extend([user_message, ai_message])
+            # chat.save()
             
             return Response({"answer": answer})
         except Exception as e:
             return Response({"error": str(e)}, status=500)
 
     def get(self, request, chat_id):
-        chat = get_object_or_404(Chat, id=chat_id, user=request.user)
-        return Response({"messages": chat.messages or []})
+        # chat = get_object_or_404(Chat, id=chat_id, user=request.user)  # Commented for no auth
+        return Response({"messages": []})  # Return empty messages for no auth
 
 class ChatListCreateView(APIView):
-    authentication_classes = [JWTAuthentication]
-    permission_classes = [IsAuthenticated]
+    authentication_classes = []  # Disable authentication
+    permission_classes = []  # Disable permissions
 
     def get(self, request):
-        chats = Chat.objects.filter(user=request.user)
-        serializer = ChatSerializer(chats, many=True)
-        return Response(serializer.data)
+        # chats = Chat.objects.filter(user=request.user)  # Commented for no auth
+        # serializer = ChatSerializer(chats, many=True)
+        return Response({"chats": []})  # Return empty chats for no auth
 
     def post(self, request):
-        serializer = ChatSerializer(data={**request.data, 'user': request.user.id})
-        if serializer.is_valid():
-            chat = serializer.save()
-            return Response(ChatSerializer(chat).data, status=201)
-        return Response(serializer.errors, status=400)
+        # serializer = ChatSerializer(data={**request.data, 'user': request.user.id})  # Commented for no auth
+        # if serializer.is_valid():
+        #     chat = serializer.save()
+        #     return Response(ChatSerializer(chat).data, status=201)
+        # return Response(serializer.errors, status=400)
+        return Response({"message": "Chat creation disabled for no auth mode"}, status=200)
 
 class KnowledgeGraphRetrieveView(APIView):
-    authentication_classes = [JWTAuthentication]
-    permission_classes = [IsAuthenticated]
+    authentication_classes = []  # Disable authentication
+    permission_classes = []  # Disable permissions
 
     def get(self, request, chat_id):
-        chat = get_object_or_404(Chat, id=chat_id, user=request.user)
-        if hasattr(chat, 'knowledge_graph'):
-            serializer = KnowledgeGraphSerializer(chat.knowledge_graph)
-            return Response(serializer.data)
-        return Response({'error': 'No knowledge graph for this chat.'}, status=404)
+        # chat = get_object_or_404(Chat, id=chat_id, user=request.user)  # Commented for no auth
+        # if hasattr(chat, 'knowledge_graph'):
+        #     serializer = KnowledgeGraphSerializer(chat.knowledge_graph)
+        #     return Response(serializer.data)
+        # return Response({'error': 'No knowledge graph for this chat.'}, status=404)
+        return Response({'error': 'Knowledge graph disabled for no auth mode'}, status=404)
 
 class ChatMessageView(APIView):
-    authentication_classes = [JWTAuthentication]
-    permission_classes = [IsAuthenticated]
+    authentication_classes = []  # Disable authentication
+    permission_classes = []  # Disable permissions
 
     def post(self, request, chat_id):
-        chat = get_object_or_404(Chat, id=chat_id, user=request.user)
+        # chat = get_object_or_404(Chat, id=chat_id, user=request.user)  # Commented for no auth
         content = request.data.get("content")
         sender = request.data.get("sender", "user")
         
@@ -439,26 +481,26 @@ class ChatMessageView(APIView):
                 "timestamp": str(datetime.now())
             }
             
-            # Append message to chat
-            if not chat.messages:
-                chat.messages = []
-            chat.messages.append(message)
-            chat.save()
+            # Append message to chat (commented for no auth)
+            # if not chat.messages:
+            #     chat.messages = []
+            # chat.messages.append(message)
+            # chat.save()
             
-            return Response({"message": "Message stored successfully"})
+            return Response({"message": "Message stored successfully (no auth mode)"})
         except Exception as e:
             return Response({"error": str(e)}, status=500)
 
     def get(self, request, chat_id):
-        chat = get_object_or_404(Chat, id=chat_id, user=request.user)
-        return Response({"messages": chat.messages or []})
+        # chat = get_object_or_404(Chat, id=chat_id, user=request.user)  # Commented for no auth
+        return Response({"messages": []})  # Return empty messages for no auth
 
 
 
 #hackrx
 class HackRxRunView(APIView):
-    # authentication_classes = [JWTAuthentication]
-    # permission_classes = [IsAuthenticated]
+    authentication_classes = []  # Disable authentication
+    permission_classes = []  # Disable permissions
 
     def post(self, request, *args, **kwargs):
         """
