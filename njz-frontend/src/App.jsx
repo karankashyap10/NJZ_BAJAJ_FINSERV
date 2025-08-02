@@ -26,6 +26,7 @@ const App = () => {
   const [selectedChatId, setSelectedChatId] = useState(null);
   const [graphData, setGraphData] = useState({});
   const [user, setUser] = useState(null);
+  
   // Fetch chat history on mount
   React.useEffect(() => {
     async function fetchChats() {
@@ -42,7 +43,7 @@ const App = () => {
           lastUpdated: chat.created_at
         })));
       } catch (err) {
-        console.err(err);
+        console.error(err);
       }
     }
     fetchChats();
@@ -57,7 +58,7 @@ const App = () => {
         setUser({ username: decoded.username || decoded.user_name || decoded.email || 'User' });
       } catch (e) {
         setUser(null);
-        console.err(e);
+        console.error(e);
       }
     } else {
       setUser(null);
@@ -72,18 +73,25 @@ const App = () => {
         },
       });
       const chat = res.data;
-      setChatHistory(prev => [
-        ...prev,
-        {
-          id: chat.id,
-          title: chat.name,
-          messageCount: chat.messages ? chat.messages.length : 0,
-          lastUpdated: chat.created_at
-        }
-      ]);
+      const newChatItem = {
+        id: chat.id,
+        title: chat.name,
+        messageCount: chat.messages ? chat.messages.length : 0,
+        lastUpdated: chat.created_at
+      };
+      
+      // Add new chat to history
+      setChatHistory(prev => [...prev, newChatItem]);
+      
+      // Automatically switch to the new chat and clear messages
       setSelectedChatId(chat.id);
+      setMessages([]); // Clear messages for new chat
+      
+      console.log('Created and switched to new chat:', chat.id);
+      
     } catch (err) {
-      console.log(err);
+      console.error('Error creating chat:', err);
+      throw err; // Re-throw so the sidebar can handle the error state
     }
   };
 
@@ -124,8 +132,11 @@ const App = () => {
   };
 
   const handleChatSelect = async (chatId) => {
+    if (chatId === selectedChatId) return; // Don't reload if same chat
+    
     setSelectedChatId(chatId);
     setMessages([]); // Clear messages while loading
+    
     try {
       console.log('Fetching messages for chat:', chatId);
       const res = await axios.get(`${API_BASE}/rag/chats/${chatId}/messages/`, {
@@ -136,6 +147,7 @@ const App = () => {
       console.log('Backend response:', res.data);
       const messages = res.data.messages || [];
       console.log('Parsed messages:', messages);
+      
       // Convert backend message format to frontend format
       const parsedMessages = messages.map(msg => ({
         content: msg.content,
@@ -177,7 +189,7 @@ const App = () => {
       setGraphData(res.data.graph_data || {});
     } catch (err) {
       setGraphData({ error: 'Could not fetch knowledge graph.' });
-      console.err(err);
+      console.error(err);
     }
     setIsGraphModalOpen(true);
   };

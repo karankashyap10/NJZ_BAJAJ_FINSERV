@@ -16,6 +16,7 @@ const FileUploadSidebar = ({ files, onFileUpload, onFileRemove, chatHistory, onC
   const [uploading, setUploading] = React.useState(false);
   const [uploadError, setUploadError] = React.useState(null);
   const [newChatName, setNewChatName] = React.useState('');
+  const [creatingChat, setCreatingChat] = React.useState(false);
 
   const handleUpload = async (file) => {
     if (!selectedChatId) {
@@ -50,9 +51,6 @@ const FileUploadSidebar = ({ files, onFileUpload, onFileRemove, chatHistory, onC
     }
   };
 
-
-
-
   const handleFileUploadWrapper = (newFiles) => {
     onFileUpload(newFiles);
     if (newFiles.length > 0) {
@@ -60,10 +58,24 @@ const FileUploadSidebar = ({ files, onFileUpload, onFileRemove, chatHistory, onC
     }
   };
 
-  const handleCreateChatClick = () => {
-    if (newChatName.trim()) {
-      onCreateChat(newChatName.trim());
-      setNewChatName('');
+  const handleCreateChatClick = async () => {
+    if (newChatName.trim() && !creatingChat) {
+      setCreatingChat(true);
+      try {
+        await onCreateChat(newChatName.trim()); 
+        setNewChatName('');
+      } catch (error) {
+        console.error('Error creating chat:', error);
+      } finally {
+        setCreatingChat(false);
+      }
+    }
+  };
+
+  const handleKeyPress = (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      handleCreateChatClick();
     }
   };
 
@@ -105,10 +117,17 @@ const FileUploadSidebar = ({ files, onFileUpload, onFileRemove, chatHistory, onC
                 placeholder="New chat name"
                 value={newChatName}
                 onChange={e => setNewChatName(e.target.value)}
-                className="flex-1 px-2 py-1 rounded bg-[#23232b] border border-cyan-300 text-cyan-300"
+                onKeyPress={handleKeyPress}
+                disabled={creatingChat}
+                className="flex-1 px-2 py-1 rounded bg-[#23232b] border border-cyan-300 text-cyan-300 disabled:opacity-50"
               />
-              <Button variant="primary" size="sm" onClick={handleCreateChatClick}>
-                +
+              <Button 
+                variant="primary" 
+                size="sm" 
+                onClick={handleCreateChatClick}
+                disabled={!newChatName.trim() || creatingChat}
+              >
+                {creatingChat ? '...' : '+'}
               </Button>
             </div>
             <FileUploadField
