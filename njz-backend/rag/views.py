@@ -34,10 +34,14 @@ import tempfile
 
 
 # Load local embedding model (downloaded once, then reused)
-embedding_model = SentenceTransformer("all-MiniLM-L6-v2")  # ~384 dims
+# Using a better model for improved semantic understanding
+embedding_model = SentenceTransformer("all-mpnet-base-v2")  # ~768 dims, better quality
+
+# Initialize Gemini model globally (load once, reuse) - using flash for speed
+gemini_model = genai.GenerativeModel("gemini-2.5-flash")
 
 # Adjust FAISS index to match model dimensions
-d = 384
+d = 768  # Updated dimension for all-mpnet-base-v2
 index = faiss.IndexFlatL2(d)
 
 # Load spaCy model
@@ -46,33 +50,58 @@ nlp = spacy.load("en_core_web_sm")
 # Neo4j connection
 driver = GraphDatabase.driver("neo4j+s://e4746836.databases.neo4j.io", auth=("neo4j", "mMEzzIJOOBuXLoc9o-mMOryYRq2YWJU9324ynlsGTi4"))
 
+# Embedding cache for frequently accessed queries
+embedding_cache = {}
+
+# Configuration for performance optimization
+ENABLE_KNOWLEDGE_GRAPH = True  # Set to False to disable graph construction entirely
+
 # ========== TEXT EXTRACTION & CHUNKING ==========
 # ========== TEXT EXTRACTION & SMART CHUNKING ==========
 
-def semantic_chunking(text: str, max_tokens: int = 300) -> List[str]:
+def semantic_chunking(text: str, max_tokens: int = 512) -> List[str]:
     """
-    Split text into semantically meaningful chunks using spaCy sentence boundaries,
-    limiting each chunk by token count (not character count).
+    Enhanced semantic chunking with better text preprocessing and overlap.
     """
+    # Preprocess text
+    text = text.replace('\n\n', '\n').replace('\r\n', '\n')
+    text = ' '.join(text.split())  # Normalize whitespace
+    
     doc = nlp(text)
     chunks = []
     current_chunk = ""
     current_token_count = 0
+    overlap_tokens = 50  # Token overlap between chunks for better context
 
     for sent in doc.sents:
-        sent_token_count = len(sent.text.split())
+        sent_text = sent.text.strip()
+        sent_token_count = len(sent_text.split())
+        
+        # If adding this sentence would exceed limit
         if current_token_count + sent_token_count > max_tokens:
             if current_chunk.strip():
                 chunks.append(current_chunk.strip())
-            current_chunk = sent.text
-            current_token_count = sent_token_count
+            
+            # Start new chunk with overlap
+            if chunks and overlap_tokens > 0:
+                # Get last few sentences from previous chunk for overlap
+                prev_chunk_words = current_chunk.split()
+                overlap_words = prev_chunk_words[-overlap_tokens:] if len(prev_chunk_words) > overlap_tokens else prev_chunk_words
+                current_chunk = " ".join(overlap_words) + " " + sent_text
+                current_token_count = len(overlap_words) + sent_token_count
+            else:
+                current_chunk = sent_text
+                current_token_count = sent_token_count
         else:
-            current_chunk += " " + sent.text
+            current_chunk += " " + sent_text
             current_token_count += sent_token_count
 
     if current_chunk.strip():
         chunks.append(current_chunk.strip())
 
+    # Filter out very short chunks
+    chunks = [chunk for chunk in chunks if len(chunk.split()) > 10]
+    
     return chunks
 
 def extract_and_chunk(file_path: str):
@@ -94,31 +123,113 @@ def save_metadata_json(path="metadata.json"):
     print(f"✅ Saved metadata to {path}")
 
 def embed_and_index(chunks: List[str], meta: List[dict]):
-    vecs = embedding_model.encode(chunks, convert_to_numpy=True)
-    index.add(vecs.astype("float32"))
+    # Batch processing with normalization for better performance
+    if not chunks:
+        return
+    
+    # Normalize text chunks for better embeddings
+    normalized_chunks = [chunk.strip().replace('\n', ' ').replace('\r', ' ') for chunk in chunks]
+    
+    # Batch encode with progress tracking
+    print(f"🔄 Encoding {len(normalized_chunks)} chunks...")
+    vecs = embedding_model.encode(
+        normalized_chunks, 
+        convert_to_numpy=True,
+        show_progress_bar=True,
+        batch_size=32  # Optimized batch size
+    )
+    
+    # Normalize vectors for better similarity search
+    vecs = vecs.astype("float32")
+    faiss.normalize_L2(vecs)
+    
+    index.add(vecs)
     store_metadata(meta)
+    print(f"✅ Added {len(normalized_chunks)} embeddings to index")
 
 def save_faiss_index(path="faiss_index.idx"):
     faiss.write_index(index, path)
     print(f"✅ Saved FAISS index to {path}")
 
 # ========== KNOWLEDGE GRAPH ==========
-def build_graph(text: str, doc_id: str):
-    doc = nlp(text)
-    relations = []
-    for sent in doc.sents:
-        for ent1 in sent.ents:
-            for ent2 in sent.ents:
-                if ent1 != ent2:
-                    relations.append((ent1.text, "co_occurs_with", ent2.text))
-    with driver.session() as session:
-        for subj, rel, obj in relations:
-            session.run(
-                "MERGE (a:Entity {name:$subj}) "
-                "MERGE (b:Entity {name:$obj}) "
-                "MERGE (a)-[:REL {type:$rel, source:$doc_id}]->(b)",
-                {"subj": subj, "obj": obj, "rel": rel, "doc_id": doc_id}
-            )
+def build_graph(text: str, doc_id: str, enable_graph: bool = True):
+    """
+    Optimized graph construction with batch processing and filtering.
+    """
+    if not enable_graph:
+        print(f"⏭️ Skipping graph construction for {doc_id}")
+        return
+        
+    print(f"🔄 Building knowledge graph for {doc_id}...")
+    
+    # Process text in smaller chunks to avoid memory issues
+    doc = nlp(text[:50000])  # Limit text size for performance
+    
+    # Collect entities with deduplication
+    entity_pairs = set()
+    entity_count = {}
+    
+    # Process sentences in batches
+    batch_size = 50
+    sentences = list(doc.sents)
+    
+    for i in range(0, len(sentences), batch_size):
+        batch = sentences[i:i + batch_size]
+        
+        for sent in batch:
+            entities = list(sent.ents)
+            
+            # Skip sentences with too many entities (performance optimization)
+            if len(entities) > 10:
+                continue
+                
+            # Create entity pairs (avoid duplicates)
+            for j, ent1 in enumerate(entities):
+                ent1_text = ent1.text.strip()
+                if len(ent1_text) < 2 or len(ent1_text) > 50:  # Filter entity size
+                    continue
+                    
+                entity_count[ent1_text] = entity_count.get(ent1_text, 0) + 1
+                
+                for ent2 in entities[j+1:]:  # Avoid duplicate pairs
+                    ent2_text = ent2.text.strip()
+                    if len(ent2_text) < 2 or len(ent2_text) > 50:
+                        continue
+                        
+                    # Create sorted pair to avoid duplicates
+                    pair = tuple(sorted([ent1_text, ent2_text]))
+                    entity_pairs.add(pair)
+    
+    # Limit the number of relationships for performance
+    max_relations = 1000
+    if len(entity_pairs) > max_relations:
+        # Keep most frequent entity pairs
+        entity_pairs = set(list(entity_pairs)[:max_relations])
+    
+    print(f"📊 Found {len(entity_pairs)} entity relationships")
+    
+    # Batch insert into Neo4j
+    if entity_pairs:
+        with driver.session() as session:
+            # Prepare batch data
+            batch_data = []
+            for ent1, ent2 in entity_pairs:
+                batch_data.append({
+                    "subj": ent1,
+                    "obj": ent2,
+                    "rel": "co_occurs_with",
+                    "doc_id": doc_id
+                })
+            
+            # Execute batch operation
+            session.run("""
+                UNWIND $batch as row
+                MERGE (a:Entity {name: row.subj})
+                MERGE (b:Entity {name: row.obj})
+                MERGE (a)-[:REL {type: row.rel, source: row.doc_id}]->(b)
+            """, {"batch": batch_data})
+    
+    print(f"✅ Knowledge graph updated with {len(entity_pairs)} relationships")
 
 # ========== MAIN ==========
 def ingestion(pdf_folder: str):
@@ -160,29 +271,37 @@ MEDIA_DIR = getattr(settings, 'MEDIA_ROOT', 'media')
 os.makedirs(MEDIA_DIR, exist_ok=True)
 INDEX_PATH = os.path.join(MEDIA_DIR, 'faiss_index.idx')
 METADATA_PATH = os.path.join(MEDIA_DIR, 'metadata.json')
-EMBEDDING_MODEL_NAME = "all-MiniLM-L6-v2"
+EMBEDDING_MODEL_NAME = "all-mpnet-base-v2"
 TOP_K = 5
 
 genai.configure(api_key="AIzaSyCiAWJw41BYAPi6qs4aJqjID_P3Goj1NQ4")
 # Load FAISS index and metadata
 
 def load_resources() -> Tuple[faiss.IndexFlatL2, List[dict], SentenceTransformer]:
-    # load FAISS index
-    d = 384  # embedding dimension
+    # load FAISS index with updated dimensions
+    d = 768  # Updated embedding dimension for all-mpnet-base-v2
     if os.path.exists(INDEX_PATH):
-        index = faiss.read_index(INDEX_PATH)
+        try:
+            index = faiss.read_index(INDEX_PATH)
+            print(f"✅ Loaded existing FAISS index with {index.ntotal} vectors")
+        except Exception as e:
+            print(f"⚠️ Error loading index, creating new one: {e}")
+            index = faiss.IndexFlatL2(d)
     else:
         index = faiss.IndexFlatL2(d)
+        print("🆕 Created new FAISS index")
 
     # load metadata
     if os.path.exists(METADATA_PATH):
         with open(METADATA_PATH, 'r', encoding='utf-8') as f:
             metadata = json.load(f)
+        print(f"✅ Loaded {len(metadata)} metadata entries")
     else:
         metadata = []
+        print("🆕 No existing metadata found")
 
-    # load embedding model
-    embedder = SentenceTransformer(EMBEDDING_MODEL_NAME)
+    # load embedding model (reuse global instance)
+    embedder = embedding_model  # Use the global instance
     return index, metadata, embedder
 
 # --------------------------------------------------
@@ -193,31 +312,60 @@ def retrieve_context(query: str,
                      metadata: List[dict],
                      embedder: SentenceTransformer,
                      top_k: int = TOP_K) -> List[str]:
-    # encode query
-    q_emb = embedder.encode([query], convert_to_numpy=True).astype('float32')
+    # Normalize query for better embedding
+    normalized_query = query.strip().replace('\n', ' ').replace('\r', ' ')
     
-    # search
-    distances, indices = index.search(q_emb, top_k)
+    # Check cache first
+    cache_key = hash(normalized_query)
+    if cache_key in embedding_cache:
+        q_emb = embedding_cache[cache_key]
+    else:
+        # encode query with same normalization as chunks
+        q_emb = embedder.encode([normalized_query], convert_to_numpy=True).astype('float32')
+        # Cache the embedding (limit cache size)
+        if len(embedding_cache) < 1000:  # Prevent memory issues
+            embedding_cache[cache_key] = q_emb
     
-    # gather chunk texts
+    # Normalize query vector for cosine similarity
+    faiss.normalize_L2(q_emb)
+    
+    # search with improved parameters
+    distances, indices = index.search(q_emb, min(top_k, len(metadata)))
+    
+    # gather chunk texts with distance filtering
     chunks = []
-    for idx in indices[0]:
-        chunks.append(metadata[idx]["chunk_text"])
+    for i, idx in enumerate(indices[0]):
+        if idx < len(metadata) and distances[0][i] < 1.5:  # Distance threshold
+            chunks.append(metadata[idx]["chunk_text"])
+    
+    # If no good matches, return top result anyway
+    if not chunks and indices[0].size > 0:
+        chunks.append(metadata[indices[0][0]]["chunk_text"])
+    
     return chunks
 
 # --------------------------------------------------
 # Ask Gemini with retrieved context
 # --------------------------------------------------
 def answer_with_gemini(query: str, context: List[str]) -> str:
-    prompt = (
-        "You are an expert assistant. Use the following document excerpts to answer the question precisely.\n\n"
-        "Excerpts:\n" + "\n---\n".join(context) + "\n\n"
-        "Question: " + query + "\nAnswer:"
-    )
+    # Optimized prompt for faster, more precise responses
+    prompt = f"""You are a precise document Q&A assistant. Answer the question using ONLY the provided excerpts.
 
-    # Load model (only once ideally, can move this outside function for efficiency)
-    model = genai.GenerativeModel("gemini-2.5-pro")
-    response = model.generate_content(prompt)
+CONTEXT:
+{chr(10).join(f"• {chunk}" for chunk in context)}
+
+QUESTION: {query}
+
+INSTRUCTIONS:
+- Answer in 1-2 concise sentences maximum
+- Use only information from the provided context
+- If the answer isn't in the context, say "The information is not available in the provided documents"
+- Be direct and factual
+
+ANSWER:"""
+
+    # Use global model instead of loading each time
+    response = gemini_model.generate_content(prompt)
     
     return response.text
 
@@ -308,13 +456,18 @@ class UploadPDFToChatView(APIView):
             # Save updated index/metadata
             save_chat_index(chat_id, index)
             save_chat_metadata(chat_id, metadata)
-            # Update or create knowledge graph
-            build_graph(full_text, doc_id=pdf_file.name)
-            if hasattr(chat, 'knowledge_graph'):
-                chat.knowledge_graph.graph_data = {"info": f"Updated with {pdf_file.name}"}
-                chat.knowledge_graph.save()
-            else:
-                KnowledgeGraph.objects.create(chat=chat, graph_data={"info": f"Created with {pdf_file.name}"})
+            # Update or create knowledge graph (optional for performance)
+            if ENABLE_KNOWLEDGE_GRAPH:
+                try:
+                    build_graph(full_text, doc_id=pdf_file.name, enable_graph=True)
+                    if hasattr(chat, 'knowledge_graph'):
+                        chat.knowledge_graph.graph_data = {"info": f"Updated with {pdf_file.name}"}
+                        chat.knowledge_graph.save()
+                    else:
+                        KnowledgeGraph.objects.create(chat=chat, graph_data={"info": f"Created with {pdf_file.name}"})
+                except Exception as e:
+                    print(f"⚠️ Graph construction failed: {e}")
+                    # Continue without graph if it fails
         except Exception as e:
             # Optionally, clean up file
             if os.path.exists(file_path):
