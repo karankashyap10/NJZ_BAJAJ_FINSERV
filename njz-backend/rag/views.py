@@ -76,7 +76,7 @@ index = faiss.IndexFlatL2(d)
 nlp = spacy.load("en_core_web_sm")
 
 # Neo4j connection
-driver = GraphDatabase.driver("neo4j+s://e4746836.databases.neo4j.io", auth=("neo4j", "mMEzzIJOOBuXLoc9o-mMOryYRq2YWJU9324ynlsGTi4"))
+#driver = GraphDatabase.driver("neo4j+s://e4746836.databases.neo4j.io", auth=("neo4j", "mMEzzIJOOBuXLoc9o-mMOryYRq2YWJU9324ynlsGTi4"))
 
 # ========== TEXT EXTRACTION & CHUNKING ==========
 # ========== TEXT EXTRACTION & SMART CHUNKING ==========
@@ -161,22 +161,22 @@ def save_faiss_index(path="faiss_index.idx"):
     print(f"✅ Saved FAISS index to {path}")
 
 # ========== KNOWLEDGE GRAPH ==========
-def build_graph(text: str, doc_id: str):
-    doc = nlp(text)
-    relations = []
-    for sent in doc.sents:
-        for ent1 in sent.ents:
-            for ent2 in sent.ents:
-                if ent1 != ent2:
-                    relations.append((ent1.text, "co_occurs_with", ent2.text))
-    with driver.session() as session:
-        for subj, rel, obj in relations:
-            session.run(
-                "MERGE (a:Entity {name:$subj}) "
-                "MERGE (b:Entity {name:$obj}) "
-                "MERGE (a)-[:REL {type:$rel, source:$doc_id}]->(b)",
-                {"subj": subj, "obj": obj, "rel": rel, "doc_id": doc_id}
-            )
+# def build_graph(text: str, doc_id: str):
+#     doc = nlp(text)
+#     relations = []
+#     for sent in doc.sents:
+#         for ent1 in sent.ents:
+#             for ent2 in sent.ents:
+#                 if ent1 != ent2:
+#                     relations.append((ent1.text, "co_occurs_with", ent2.text))
+#     with driver.session() as session:
+#         for subj, rel, obj in relations:
+#             session.run(
+#                 "MERGE (a:Entity {name:$subj}) "
+#                 "MERGE (b:Entity {name:$obj}) "
+#                 "MERGE (a)-[:REL {type:$rel, source:$doc_id}]->(b)",
+#                 {"subj": subj, "obj": obj, "rel": rel, "doc_id": doc_id}
+#             )
 
 # ========== MAIN ==========
 def ingestion(pdf_folder: str):
