@@ -7,7 +7,6 @@ from pypdf import PdfReader
 import faiss
 import numpy as np
 import spacy
-from neo4j import GraphDatabase
 from sentence_transformers import SentenceTransformer
 import google.generativeai as genai
 from django.core.files.storage import default_storage
