@@ -1,32 +1,20 @@
-# Create your views here. 
 import os
 import json
 from typing import List, Tuple
 from pathlib import Path
 from pypdf import PdfReader
-from langchain.text_splitter import RecursiveCharacterTextSplitter
+
 import faiss
 import numpy as np
 import spacy
-from neo4j import GraphDatabase
 from sentence_transformers import SentenceTransformer
 import google.generativeai as genai
-from django.views.decorators.csrf import csrf_exempt
-from django.http import JsonResponse
-import json as dj_json
 from django.core.files.storage import default_storage
 from django.core.files.base import ContentFile
 from rest_framework.views import APIView
 from rest_framework.response import Response
-from rest_framework.permissions import IsAuthenticated
-from rest_framework.authentication import BasicAuthentication
-from rest_framework_simplejwt.authentication import JWTAuthentication
 from rest_framework.parsers import MultiPartParser, FormParser
 from django.conf import settings
-from .models import Chat, KnowledgeGraph
-from .serializers import ChatSerializer, KnowledgeGraphSerializer
-from django.shortcuts import get_object_or_404
-import shutil
 from datetime import datetime
 import requests
 import tempfile
